@@ -1,0 +1,342 @@
+<html>
+<head>
+<title>Wordle solution sharer</title>
+
+<style type="text/css">
+#form {
+    text-align: center;
+    display: inline-block;
+    width: 100%;
+    margin: auto;
+}
+
+#viewGrid td {
+    display: inline-block;
+    margin: auto;
+    text-transform: uppercase;
+    font-family: sans-serif;
+    font-size: x-large;
+    width: 1em;
+    text-align: center;
+    color: white;
+    margin: 0px 1px;
+    border: 1px solid gray;
+}
+
+.green {
+    background-color: #6aaa64;
+}
+
+.yellow {
+    background-color: #c9b458;
+}
+
+.gray {
+    background-color: #787c7e;
+}
+
+.invalid {
+
+}
+
+</style>
+
+<script type="text/javascript">
+var letters = "abcdefghijklmnopqrstuvwxyz ";
+var encodedGrid = window.location.search.replace(/^\?/, "");
+var creating = false;
+
+function startup() {
+    creating = encodedGrid.length == 0;
+    document.getElementById('createHeader').style.display = (creating ? 'inline' : 'none');
+    document.getElementById('create').style.display = (creating ? 'inline' : 'none');
+    document.getElementById('viewHeader').style.display = (creating ? 'none' : 'inline');
+    document.getElementById('viewGrid').style.display = (creating ? 'none' : 'inline-block');
+    document.getElementById('form').style.display = 'inline-block';
+}
+
+function replaceAt(str, index, replacement) {
+    return str.substring(0, index) + replacement + str.substring(index + replacement.length);
+}
+
+function getAnswer() {
+    return document.getElementById("answer").value.toLowerCase().trim();
+}
+
+function getGuess(i) {
+    return document.getElementById("guess" + i).value.toLowerCase().trim();
+}
+
+function writeGuess(answer, guess, guessIndex) {
+    var colors = Array(guess.length).fill("gray");
+
+    for(var i = 0; i < guess.length; ++i) {
+        if(guess.charAt(i) == answer.charAt(i)) {
+            colors[i] = "green";
+            answer = replaceAt(answer, i, "_");
+        }
+    }
+
+    for(var i = 0; i < guess.length; ++i) {
+        if(colors[i] !== "gray") {
+            continue;
+        }
+
+        var foundIndex = answer.indexOf(guess.charAt(i));
+        if(foundIndex >= 0) {
+            colors[i] = "yellow";
+            answer = replaceAt(answer, foundIndex, "_");
+        }
+    }
+
+    for(var i = 0; i < guess.length; ++i) {
+        var td = document.getElementById("letter" + guessIndex + "_" + (i + 1));
+        if(guess.charAt(i) === " ") {
+            td.innerHTML = "&nbsp;";
+            td.className = "";
+        } else {
+            td.innerHTML = guess.charAt(i);
+            td.className = colors[i];
+        }
+    }
+}
+
+async function answerChange() {
+    if(creating) 
+        return;
+    
+    var answer = getAnswer();
+    var guesses = await decodeUrl(answer, encodedGrid);
+    document.getElementById('invalidAnswer').style.display = (guesses === null ? "inline" : "none"); 
+    if(guesses === null) 
+        return;
+
+    for(var i = 1; i <= 6; ++i) {
+        writeGuess(answer, guesses[i - 1], i);
+    }
+}
+
+
+function guessChange() {
+}
+
+async function decodeUrl(answer, base64) {
+    var byteStr = atob(base64.replace(/_/g, '/').replace(/-/g, '+') + "A==");
+    // TODO: validate
+    var bytes = [];
+    for(var i = 0; i < byteStr.length; ++i) {
+        bytes.push(byteStr.charCodeAt(i)); 
+    }
+    bytes = await answerXor(answer, bytes);
+    bytes[bytes.length - 1] >>= 2;
+
+    var guesses = [];
+    var byteIndex = 0;
+    var bitIndex = 0;
+    for(var guessIndex = 0; guessIndex < 6; ++guessIndex) {
+        var guess = "";
+        for(var i = 0; i < 5; ++i) {
+            var letterIndex = bytes[byteIndex] >> bitIndex;
+            bitIndex += 5;
+            if(bitIndex >= 8) {
+                bitIndex -= 8;
+                ++byteIndex;
+                letterIndex |= bytes[byteIndex] << (5 - bitIndex);
+            }
+            letterIndex &= 31;
+            if(letterIndex >= letters.length) {
+                return null;
+            }
+            guess += letters.charAt(letterIndex);
+        }
+        guesses.push(guess);
+    }
+
+    return guesses;
+}
+
+async function encodeUrl(answer, guesses) {   
+    var bytes = Array(19).fill(0);
+    var byteIndex = 0;
+    var bitIndex = 0;
+
+    for(var i = 0; i < guesses.length; ++i) {
+        var charIndex = letters.indexOf(guesses.charAt(i));     // TODO: validate?
+        bytes[byteIndex] |= (charIndex << bitIndex);
+
+        bitIndex += 5;
+        if(bitIndex >= 8) {
+            var overflow = bytes[byteIndex] >> 8;
+            bytes[byteIndex] &= 255;
+            ++byteIndex;
+            bitIndex -= 8;
+            bytes[byteIndex] = overflow;
+        }
+    }
+
+    bytes[bytes.length - 1] <<= 2;
+    bytes = await answerXor(answer, bytes);
+    var byteStr = String.fromCharCode(...bytes);
+    return btoa(byteStr).replace(/\//g, '_').replace(/\+/g, '-').replace("A==", "");
+}
+
+async function answerXor(answer, bytes) {
+    var answerBytes = [];
+    for(var i = 0; i < answer.length; ++i) {
+        answerBytes.push(answer.charCodeAt(i));     // TODO: encoding?
+    }
+
+    var buffer = await window.crypto.subtle.digest("SHA-256", new Uint8Array(answerBytes).buffer);
+    var hashBytes = Array.from(new Uint8Array(buffer));
+    for(var i = 0; i < bytes.length; ++i) {
+        bytes[i] ^= hashBytes[i];
+    }
+    bytes[bytes.length - 1] &= 0xfc;
+    return bytes;
+}
+
+async function generateUrl() {
+    var valid = true;
+
+    // TODO: validate
+    var answer = getAnswer();
+    var guesses = "";
+    for(var i = 1; i <= 6; ++i) {
+        var guess = getGuess(i);;
+        // TODO: validate
+
+        if(guess.length == 5) {
+            guesses += guess;
+        } else if(guess.length == 0) {
+            guesses += "     ";
+        } else {
+            // TODO: validate
+        }
+    }
+
+    if(!valid)
+        return;
+
+    for(var i = 1; i <= 6; ++i) {
+        var guess = getGuess(i);
+        writeGuess(answer, guess, i);
+    }
+
+    var shareLink = document.getElementById("shareUrl");
+    var shareUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + "?" + await encodeUrl(answer, guesses);
+    shareLink.text = shareUrl;
+    shareLink.href = shareUrl;
+    shareLink.style.display = "inline";
+}
+</script>
+
+</head>
+<body onload="startup();">
+
+<div id="form" style="display:none;">
+
+    <p id="createHeader">
+    Provides a way to share your Wordle guesses without revealing the solution or any hints to those who have not solved it yet.
+    </p>
+    <p id="viewHeader">
+    Enter the Wordle answer to unlock the provided Guess Grid. Or, <a href="?">share your own guesses</a>.
+    </p>
+
+    <p>
+    <label for="answer">Wordle Answer:</label> <input type="text" id="answer" name="answer" maxlength="5" oninput="answerChange();" /> 
+    <span class="invalid-answer" id="invalidLetters">* only A-Z are valid</span>
+    <span class="invalid-answer" id="invalidShort">* must be 5 letters</span>
+    <span class="invalid-answer" id="invalidAnswer">* this answer does not unlock the Guess Grid</span>
+    </p>
+
+    <div id="create">
+        <p>
+        Your guesses (leave unused guesses blank):
+        </p>
+        <p>
+        <label for="guess1">Guess #1:</label> <input type="text" id="guess1" name="guess1" maxlength="5" oninput="guessChange();" /> 
+        <span class="invalid" id="invalid1">* only A-Z are valid</span>
+        <span class="invalid" id="short1">* must be 5 letters</span>
+        </p>
+        <p>
+        <label for="guess2">Guess #2:</label> <input type="text" id="guess2" name="guess2" maxlength="5" oninput="guessChange();" /> 
+        <span class="invalid" id="invalid2">* only A-Z are valid</span>
+        <span class="invalid" id="short2">* must be 5 letters</span>
+        </p>
+        <p>
+        <label for="guess3">Guess #3:</label> <input type="text" id="guess3" name="guess3" maxlength="5" oninput="guessChange();" /> 
+        <span class="invalid" id="invalid3">* only A-Z are valid</span>
+        <span class="invalid" id="short3">* must be 5 letters</span>
+        </p>
+        <p>
+        <label for="guess4">Guess #4:</label> <input type="text" id="guess4" name="guess4" maxlength="5" oninput="guessChange();" /> 
+        <span class="invalid" id="invalid4">* only A-Z are valid</span>
+        <span class="invalid" id="short4">* must be 5 letters</span>
+        </p>
+        <p>
+        <label for="guess5">Guess #5:</label> <input type="text" id="guess5" name="guess5" maxlength="5" oninput="guessChange();" /> 
+        <span class="invalid" id="invalid5">* only A-Z are valid</span>
+        <span class="invalid" id="short5">* must be 5 letters</span>
+        </p>
+        <p>
+        <label for="guess6">Guess #6:</label> <input type="text" id="guess6" name="guess6" maxlength="5" oninput="guessChange();" /> 
+        <span class="invalid" id="invalid6">* only A-Z are valid</span>
+        <span class="invalid" id="short6">* must be 5 letters</span>
+        </p>
+        <p>
+        <input type="button" onclick="generateUrl();" value="Generate Share URL" />
+        </p>
+        <p>
+        <a href="" id="shareUrl" style="display:none;"></a>
+        </p>
+    </div>
+
+    <table id="viewGrid">
+    <tr>
+        <td id="letter1_1">&nbsp;</td>
+        <td id="letter1_2">&nbsp;</td>
+        <td id="letter1_3">&nbsp;</td>
+        <td id="letter1_4">&nbsp;</td>
+        <td id="letter1_5">&nbsp;</td>
+    </tr>
+    <tr>
+        <td id="letter2_1">&nbsp;</td>
+        <td id="letter2_2">&nbsp;</td>
+        <td id="letter2_3">&nbsp;</td>
+        <td id="letter2_4">&nbsp;</td>
+        <td id="letter2_5">&nbsp;</td>
+    </tr>
+    <tr>
+        <td id="letter3_1">&nbsp;</td>
+        <td id="letter3_2">&nbsp;</td>
+        <td id="letter3_3">&nbsp;</td>
+        <td id="letter3_4">&nbsp;</td>
+        <td id="letter3_5">&nbsp;</td>
+    </tr>
+    <tr>
+        <td id="letter4_1">&nbsp;</td>
+        <td id="letter4_2">&nbsp;</td>
+        <td id="letter4_3">&nbsp;</td>
+        <td id="letter4_4">&nbsp;</td>
+        <td id="letter4_5">&nbsp;</td>
+    </tr>
+    <tr>
+        <td id="letter5_1">&nbsp;</td>
+        <td id="letter5_2">&nbsp;</td>
+        <td id="letter5_3">&nbsp;</td>
+        <td id="letter5_4">&nbsp;</td>
+        <td id="letter5_5">&nbsp;</td>
+    </tr>
+    <tr>
+        <td id="letter6_1">&nbsp;</td>
+        <td id="letter6_2">&nbsp;</td>
+        <td id="letter6_3">&nbsp;</td>
+        <td id="letter6_4">&nbsp;</td>
+        <td id="letter6_5">&nbsp;</td>
+    </tr>
+    </table>
+
+</div>
+
+</body>
+</html>
