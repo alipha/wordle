@@ -48,11 +48,28 @@ var creating = false;
 
 function startup() {
     creating = encodedGrid.length == 0;
+    if(!creating && getCookie('answer') !== null) {
+        document.getElementById('answer').value = getCookie('answer');
+        answerChange();
+    }
     document.getElementById('createHeader').style.display = (creating ? 'inline' : 'none');
     document.getElementById('create').style.display = (creating ? 'inline' : 'none');
     document.getElementById('viewHeader').style.display = (creating ? 'none' : 'inline');
     document.getElementById('viewGrid').style.display = (creating ? 'none' : 'inline-block');
     document.getElementById('form').style.display = 'inline-block';
+}
+
+function getCookie(name) {
+  var match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+  if (match) return match[2]; else return null;
+}
+
+function setCookie(cname, cvalue) {
+  let date = new Date();
+  let tomorrow = new Date(date.setDate(date.getDate() + 1));
+  tomorrow.setHours(0,0,0,0);
+  let expires = "expires="+ tomorrow.toUTCString();
+  document.cookie = cname + "=" + cvalue + ";" + expires + ";path=/";
 }
 
 function replaceAt(str, index, replacement) {
@@ -102,6 +119,7 @@ function writeGuess(answer, guess, guessIndex) {
 }
 
 async function answerChange() {
+    setCookie("answer", getAnswer());
     if(creating) 
         return;
     
@@ -121,6 +139,8 @@ function guessChange() {
 }
 
 async function decodeUrl(answer, base64) {
+    if(answer.length != 5)
+        return null;
     var byteStr = atob(base64.replace(/_/g, '/').replace(/-/g, '+') + "A==");
     // TODO: validate
     var bytes = [];
