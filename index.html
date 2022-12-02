@@ -201,14 +201,35 @@ async function encodeUrl(answer, guesses) {
 }
 
 async function answerXor(answer, bytes) {
-    var answerBytes = [];
-    for(var i = 0; i < answer.length; ++i) {
-        answerBytes.push(answer.charCodeAt(i));     // TODO: encoding?
+    bytes = await xorHalf(answer, bytes, true);
+    bytes = await xorHalf(answer, bytes, false);
+    return xorHalf(answer, bytes, true);
+}
+
+async function xorHalf(answer, bytes, xorFirstHalf) {
+    var keyBytes = [];
+
+    var keyStart = 0;
+    var keyEnd = Math.floor(bytes.length / 2);
+    var xorStart = Math.floor(bytes.length / 2);
+    var xorEnd = bytes.length;
+    if(xorFirstHalf) {
+        keyStart = xorStart;
+        keyEnd = xorEnd;
+        xorStart = 0;
+        xorEnd = Math.floor(bytes.length / 2);
     }
 
-    var buffer = await window.crypto.subtle.digest("SHA-256", new Uint8Array(answerBytes).buffer);
+    for(var i = keyStart; i < keyEnd; ++i) {
+        keyBytes.push(bytes[i]);
+    }
+    for(var i = 0; i < answer.length; ++i) {
+        keyBytes.push(answer.charCodeAt(i));     // TODO: encoding?
+    }
+
+    var buffer = await window.crypto.subtle.digest("SHA-256", new Uint8Array(keyBytes).buffer);
     var hashBytes = Array.from(new Uint8Array(buffer));
-    for(var i = 0; i < bytes.length; ++i) {
+    for(var i = xorStart; i < xorEnd; ++i) {
         bytes[i] ^= hashBytes[i];
     }
     bytes[bytes.length - 1] &= 0xfc;
@@ -220,9 +241,12 @@ async function generateUrl() {
 
     // TODO: validate
     var answer = getAnswer();
+    if(answer.length < 5)
+        return;
+
     var guesses = "";
     for(var i = 1; i <= 6; ++i) {
-        var guess = getGuess(i);;
+        var guess = getGuess(i);
         // TODO: validate
 
         if(guess.length == 5) {
@@ -231,6 +255,7 @@ async function generateUrl() {
             guesses += "     ";
         } else {
             // TODO: validate
+            return;
         }
     }
 
